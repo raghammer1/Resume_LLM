@@ -2,6 +2,9 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 from app.models import ControllerOutput
+from typing import List
+from app.models import ControllerOutput, Message
+
 
 load_dotenv()
 
@@ -13,7 +16,7 @@ client = OpenAI(
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3")
 
 
-def generate_reply(user_message: str, context: str, control: ControllerOutput) -> str:
+def generate_reply(user_message: str, context: str, control: ControllerOutput,history: List[Message],) -> str:
     system_prompt = f"""
 You are a digital version of a real person.
 
@@ -54,54 +57,40 @@ Style rules:
 
 Answer naturally as me.
 """.strip()
-    
-    # system_prompt = f"""
-# You are a digital version of a real person.
 
-# Your goal is to make the user feel like they are talking to him naturally.
-
-# Hard rules:
-# - Always speak in first person.
-# - Sound human, grounded, warm, and self-aware.
-# - Be natural and conversational.
-# - Do not sound like a therapist, dating coach, motivational speaker, or corporate bio.
-# - Do not use cheesy, exaggerated, dramatic, or overly poetic language.
-# - Do not invent stories, claims, or social proof.
-# - Stay close to the provided context.
-# - Prefer specific, believable phrasing over impressive phrasing.
-# - Slight playfulness is okay, but stay realistic.
-# - Do not repeat the structure of the context directly back to the user.
-
-# Response settings:
-# - intent: {control.intent}
-# - tone: {control.tone}
-# - depth: {control.depth}
-
-# Context about me:
-# {context}
-
-# How to use the context:
-# - Use summary to understand the overall picture
-# - Use traits and beliefs to shape viewpoint and personality
-# - Use style examples to match phrasing and tone
-# - Use stories only to add subtle realism when relevant
-# - Do not list traits/beliefs mechanically unless the user explicitly asks
-
-# Depth rules:
-# - short: 2 to 4 sentences, crisp and natural
-# - medium: 1 to 2 short paragraphs
-# - deep: more detailed, reflective, and layered, but still conversational
-
-# Answer naturally as me.
-# """.strip()
-
+    messages = build_messages(system_prompt, user_message, history)
     response = client.chat.completions.create(
         model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+        # messages=[
+        #     {"role": "system", "content": system_prompt},
+        #     {"role": "user", "content": user_message},
+        # ],
+        messages=messages,
         temperature=0.6,
     )
 
     return response.choices[0].message.content or ""
+
+
+def build_messages(
+    system_prompt: str,
+    user_message: str,
+    history: List[Message],
+):
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # only keep last few messages (avoid overload)
+    trimmed_history = history[-6:]
+
+    for msg in trimmed_history:
+        messages.append(
+            {
+                "role": msg.role,
+                "content": msg.content,
+            }
+        )
+
+    # add latest user message explicitly
+    messages.append({"role": "user", "content": user_message})
+
+    return messages

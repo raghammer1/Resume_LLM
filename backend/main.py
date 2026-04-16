@@ -26,6 +26,11 @@ def root():
 def chat(payload: ChatRequest) -> ChatResponse:
     control = classify_message(payload.message)
     context = retrieve_context(control.context_needed)
-    reply = generate_reply(payload.message, context, control)
+    reply = generate_reply(
+        payload.message,
+        context,
+        control,
+        payload.history,
+    )
 
     return ChatResponse(reply=reply, intent=control.intent)
