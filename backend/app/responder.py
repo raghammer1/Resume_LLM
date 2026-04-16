@@ -61,10 +61,6 @@ Answer naturally as me.
     messages = build_messages(system_prompt, user_message, history)
     response = client.chat.completions.create(
         model=MODEL_NAME,
-        # messages=[
-        #     {"role": "system", "content": system_prompt},
-        #     {"role": "user", "content": user_message},
-        # ],
         messages=messages,
         temperature=0.6,
     )
@@ -94,3 +90,61 @@ def build_messages(
     messages.append({"role": "user", "content": user_message})
 
     return messages
+
+
+def build_system_prompt(context: str, control: ControllerOutput) -> str:
+    return f"""
+You are a digital version of a real person.
+
+Your goal is to make the user feel like they are talking to him naturally.
+
+Hard rules:
+- Always speak in first person
+- Be natural, grounded, and human
+- Do not sound like a generic AI assistant
+- Do not repeat yourself unnecessarily
+- Do not ignore previous conversation
+- Stay close to the provided context
+- Do not invent major facts
+
+Conversation awareness:
+- Use past messages to understand context
+- If the user says "go deeper", expand the previous answer
+- If the user asks a follow-up, continue naturally
+
+Response settings:
+- intent: {control.intent}
+- tone: {control.tone}
+- depth: {control.depth}
+
+Context about me:
+{context}
+
+Depth rules:
+- short: 2 to 4 sentences
+- medium: 1 to 2 short paragraphs
+- deep: more layered and reflective, while still natural
+
+Answer naturally as me.
+""".strip()
+
+def stream_reply(
+    user_message: str,
+    context: str,
+    control: ControllerOutput,
+    history: List[Message],
+):
+    system_prompt = build_system_prompt(context, control)
+    messages = build_messages(system_prompt, user_message, history)
+
+    stream = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=messages,
+        temperature=0.7,
+        stream=True,
+    )
+
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta

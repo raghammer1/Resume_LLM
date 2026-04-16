@@ -9,7 +9,9 @@ const INITIAL_ASSISTANT_MESSAGE: Message = {
 };
 
 export function useChat() {
-  const [messages, setMessages] = useState<Message[]>([INITIAL_ASSISTANT_MESSAGE]);
+  const [messages, setMessages] = useState<Message[]>([
+    INITIAL_ASSISTANT_MESSAGE,
+  ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -30,21 +32,67 @@ export function useChat() {
     setIsLoading(true);
 
     try {
-      const data = await sendChatMessage(
-        content,
-        nextMessages.map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
-      );
+      // ! CODE BELOW IS FOR NON-STREAMING RESPONSE
+      // const data = await sendChatMessage(
+      //   content,
+      //   nextMessages.map((m) => ({
+      //     role: m.role,
+      //     content: m.content,
+      //   })),
+      // );
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.reply,
+      // setMessages((prev) => [
+      //   ...prev,
+      //   {
+      //     role: "assistant",
+      //     content: data.reply,
+      //   },
+      // ]);
+      // ! CODE ABOVE IS FOR NON-STREAMING RESPONSE
+
+      // ! CODE BELOW IS FOR STREAMING RESPONSE
+      const response = await fetch("http://127.0.0.1:8000/chat-stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      ]);
+        body: JSON.stringify({
+          message: content,
+          history: nextMessages,
+        }),
+      });
+
+      if (!response.body) {
+        throw new Error("No response body");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let assistantText = "";
+
+      // 👇 create empty assistant message first
+      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        assistantText += chunk;
+
+        // 👇 update last message live
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: assistantText,
+          };
+          return updated;
+        });
+      }
+      // ! CODE ABOVE IS FOR STREAMING RESPONSE
+
     } catch (error) {
       const errorMessage =
         error instanceof Error

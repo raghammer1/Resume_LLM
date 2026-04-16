@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models import ChatRequest, ChatResponse
 from app.controller import classify_message
 from app.retriever import retrieve_context
-from app.responder import generate_reply
+from app.responder import build_messages, generate_reply, stream_reply
+from fastapi.responses import StreamingResponse
 
 app = FastAPI()
 
@@ -34,3 +35,19 @@ def chat(payload: ChatRequest) -> ChatResponse:
     )
 
     return ChatResponse(reply=reply, intent=control.intent)
+
+
+@app.post("/chat-stream")
+def chat_stream(payload: ChatRequest):
+    control = classify_message(payload.message)
+    context = retrieve_context(control.context_needed)
+
+    return StreamingResponse(
+        stream_reply(
+            payload.message,
+            context,
+            control,
+            payload.history,
+        ),
+        media_type="text/plain",
+    )
