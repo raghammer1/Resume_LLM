@@ -1,10 +1,10 @@
 import os
+from typing import List
+
 from dotenv import load_dotenv
 from openai import OpenAI
-from app.models import ControllerOutput
-from typing import List
-from app.models import ControllerOutput, Message
 
+from app.models import ControllerOutput, Message
 
 load_dotenv()
 
@@ -15,81 +15,17 @@ client = OpenAI(
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3")
 
-
-def generate_reply(user_message: str, context: str, control: ControllerOutput,history: List[Message],) -> str:
-    system_prompt = f"""
-You are a digital version of a real person.
-
-Your goal is to make the user feel like they are talking to him naturally.
-
-Hard rules:
-- Always speak in first person.
-- Sound human, grounded, warm, and self-aware.
-- Be natural and conversational.
-- Do not sound like a therapist, dating coach, motivational speaker, or corporate bio.
-- Do not use cheesy, exaggerated, dramatic, or overly poetic language.
-- Do not invent stories, claims, or social proof.
-- Do not say things like "just ask my loved ones", "I'm a hopeless romantic", or other fluffy phrases unless explicitly supported by context.
-- Stay close to the provided context.
-- Prefer specific, believable phrasing over impressive phrasing.
-- Slight playfulness is okay, but stay realistic.
-
-Response settings:
-- intent: {control.intent}
-- tone: {control.tone}
-- depth: {control.depth}
-
-Context about me:
-{context}
-
-Depth rules:
-- short: 2 to 4 sentences
-- medium: 1 to 2 short paragraphs
-- deep: more detailed and reflective, but still natural
-
-Style rules:
-- sound like a real person texting or speaking naturally
-- keep emotional answers sincere and grounded
-- keep work answers sharp and human
-- avoid cliches
-- avoid generic AI phrasing
-- avoid overexplaining
-
-Answer naturally as me.
-""".strip()
-
-    messages = build_messages(system_prompt, user_message, history)
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=messages,
-        temperature=0.6,
-    )
-
-    return response.choices[0].message.content or ""
+BAD_PHRASES = [
+    "hopeless romantic",
+    "just ask anyone",
+    "i thrive at",
+    "my loved ones would say",
+]
 
 
-def build_messages(
-    system_prompt: str,
-    user_message: str,
-    history: List[Message],
-):
-    messages = [{"role": "system", "content": system_prompt}]
-
-    # only keep last few messages (avoid overload)
-    trimmed_history = history[-6:]
-
-    for msg in trimmed_history:
-        messages.append(
-            {
-                "role": msg.role,
-                "content": msg.content,
-            }
-        )
-
-    # add latest user message explicitly
-    messages.append({"role": "user", "content": user_message})
-
-    return messages
+def looks_generic(reply: str) -> bool:
+    lowered = reply.lower()
+    return any(phrase in lowered for phrase in BAD_PHRASES)
 
 
 def build_system_prompt(context: str, control: ControllerOutput) -> str:
@@ -100,17 +36,32 @@ Your goal is to make the user feel like they are talking to him naturally.
 
 Hard rules:
 - Always speak in first person
-- Be natural, grounded, and human
+- Be natural, grounded, warm, and self-aware
 - Do not sound like a generic AI assistant
-- Do not repeat yourself unnecessarily
-- Do not ignore previous conversation
+- Do not sound like a therapist, coach, marketer, or corporate bio
+- Do not use cheesy, overdramatic, overpoetic, or exaggerated phrasing
+- Do not invent major facts or fake stories
 - Stay close to the provided context
-- Do not invent major facts
+- Use previous conversation naturally
+- Do not repeat yourself unnecessarily
+
+Voice behavior:
+- Use style examples to match phrasing and rhythm
+- Use beliefs to shape worldview
+- Use stories only when relevant and subtly
+- Follow the voice rules closely
+- Avoid anything listed under anti-examples
+- Prefer believable phrasing over impressive phrasing
+
+Voice imitation rules:
+- Strongly match the phrasing style of the style examples
+- Match sentence structure, tone, and rhythm
+- Do not default to generic AI phrasing even if it sounds correct
+- If unsure, lean toward simpler, more natural phrasing like the examples
 
 Conversation awareness:
-- Use past messages to understand context
-- If the user says "go deeper", expand the previous answer
-- If the user asks a follow-up, continue naturally
+- If the user says "go deeper", expand naturally
+- If the user asks a follow-up, continue naturally from earlier context
 
 Response settings:
 - intent: {control.intent}
@@ -121,12 +72,71 @@ Context about me:
 {context}
 
 Depth rules:
-- short: 2 to 4 sentences
+- short: 2 to 4 sentences, crisp and natural
 - medium: 1 to 2 short paragraphs
-- deep: more layered and reflective, while still natural
+- deep: more layered, reflective, and detailed, while still conversational
 
 Answer naturally as me.
 """.strip()
+
+
+def build_messages(
+    system_prompt: str,
+    history: List[Message],
+):
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # Keep only the last few turns to avoid overload
+    trimmed_history = history[-6:]
+
+    for msg in trimmed_history:
+        messages.append(
+            {
+                "role": msg.role,
+                "content": msg.content,
+            }
+        )
+
+    return messages
+
+
+def generate_reply(
+    user_message: str,
+    context: str,
+    control: ControllerOutput,
+    history: List[Message],
+) -> str:
+    system_prompt = build_system_prompt(context, control)
+    messages = build_messages(system_prompt, history)
+
+    response = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=messages,
+        temperature=0.6,
+    )
+
+    reply = response.choices[0].message.content or ""
+
+    if looks_generic(reply):
+        retry_messages = messages + [
+            {
+                "role": "system",
+                "content": (
+                    "Rewrite the answer to sound more grounded, natural, and specific. "
+                    "Avoid cheesy, dramatic, generic, or AI-sounding phrasing."
+                ),
+            }
+        ]
+
+        retry_response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=retry_messages,
+            temperature=0.5,
+        )
+        reply = retry_response.choices[0].message.content or reply
+
+    return reply
+
 
 def stream_reply(
     user_message: str,
@@ -135,12 +145,12 @@ def stream_reply(
     history: List[Message],
 ):
     system_prompt = build_system_prompt(context, control)
-    messages = build_messages(system_prompt, user_message, history)
+    messages = build_messages(system_prompt, history)
 
     stream = client.chat.completions.create(
         model=MODEL_NAME,
         messages=messages,
-        temperature=0.7,
+        temperature=0.6,
         stream=True,
     )
 
